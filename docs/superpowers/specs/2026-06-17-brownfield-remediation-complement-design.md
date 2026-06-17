@@ -80,9 +80,17 @@ Protocole : `prepare(repo, mission) -> Substrate`, où
 - `BuilderOnramp` (B) : détecte la stack → résout/synthétise un `TargetProfile` → pose les gates
   dans la stack d'origine → calcule et **déclare `enforceable`**.
 
-### 4.3 Ingestion / carte d'archi (nouveau)
+### 4.3 Ingestion / carte d'archi (nouveau) — moteur **hybride** (décision)
 Analyse le repo → carte d'archi + conventions vérifiées (modules, entrées, tests, nommage).
-Derrière un protocole `Analyzer` (l'analyse LLM est l'effet injecté). Alimente C. Quasi gratuit en A.
+Derrière un protocole `Analyzer` (effet injecté). **Moteur hybride** :
+- **Heuristiques (déterministes)** établissent les *faits durs* — stack, présence/statut tests & CI,
+  hôte git, présence d'UI. Ce sont eux qui pilotent `enforceable` (dégradation déclarée) et la
+  détection de stack ; testables à 100 % (fonction pure sur un listing de fichiers).
+- **Sous-agent** n'*interprète* que par-dessus ces faits — carte d'archi, dette, conventions
+  implicites — validé à HITL-0 (anti-hallucination).
+
+Déploiement progressif : **100 % heuristique en BA** (suffisant pour les SaaS forge), **sous-agent
+branché en BC/BB**, sans rien casser (même protocole `Analyzer`).
 
 ### 4.4 Gate de non-régression — « do no harm » (nouveau, `gates/regression_gate`)
 Baseline (statut vert/rouge des checks existants) capturée à l'onramp. À l'étape E, une story est
@@ -91,7 +99,10 @@ au brownfield. Fonction **pure** : `(baseline_verte, verdict_courant) → bloque
 
 ### 4.5 Planners (joint existant, étendu)
 - `RemediationPlanner` : *piloté par l'analyse* — compare l'existant au contrat du profil → stories de
-  correctif.
+  correctif. **Périmètre v1 (décision) : tests/CI + conformité design uniquement** — les deux dimensions
+  déjà mesurables sans outillage neuf (la baseline capturée à l'onramp + le gate `design.md` existant).
+  Sécurité, dette, montée de version arrivent en incréments ultérieurs (chacun = une dimension d'audit
+  de plus, même logique de dégradation déclarée).
 - `ComplementPlanner` : *piloté par l'intention* — specs + carte d'archi → stories de feature insérées
   dans l'archi en place.
 - **Composables** : backlog mixte possible ; dépendances inter-epics pour « stabiliser avant d'étendre ».
@@ -146,9 +157,9 @@ zéro réseau en unitaire ; ruff + mypy strict + pytest ; double gate vert (dogf
 | Epic | Contenu | Gate de sortie |
 |---|---|---|
 | **B0 · Fondations** | `TargetProfile` ; extraire le profil `fastapi-saas` (`catalog.py` → `brick_catalog`) ; refactor `code_gate` (lit `code_check`) ; protocole `Onramp` + `Substrate` ; `ScaffoldOnramp` (enveloppe `scaffold.py`) ; `mode` greenfield/brownfield au cadrage/CLI | **Greenfield identique** (zéro régression), abstractions en place, pytest vert |
-| **BA · Branche A** | `NoOnramp` (marqueurs + baseline) ; ingestion-lite ; `RegressionGate` ; `RemediationPlanner` + `ComplementPlanner` (v1) ; backlog composable via D/E | Remédier/étendre un SaaS forge de bout en bout (fakes), non-régression effective, 2 HITL intacts |
-| **BC · Branche C** | `AdapterOnramp` (normalise) ; HITL-0 léger ; ingestion d'un repo externe compatible | Onboarder un repo FastAPI non-forge, le normaliser, dérouler le flux unifié |
-| **BB · Branche B** (B-standard) | détection de stack ; `BuilderOnramp` ; **un** profil non-FastAPI (ex. `node-ts`) ; dégradation déclarée ; HITL-0 forcé ; hôte GitHub d'abord | Hisser **une** stack non-FastAPI au standard de la cible avec dégradation déclarée |
+| **BA · Branche A** | `NoOnramp` (marqueurs + baseline) ; **ingestion heuristique** ; `RegressionGate` ; `RemediationPlanner` (v1 : tests/CI + design) + `ComplementPlanner` ; backlog composable via D/E | Remédier/étendre un SaaS forge de bout en bout (fakes), non-régression effective, 2 HITL intacts |
+| **BC · Branche C** | `AdapterOnramp` (normalise) ; HITL-0 léger ; ingestion **hybride** (sous-agent branché) sur un repo externe compatible | Onboarder un repo FastAPI non-forge, le normaliser, dérouler le flux unifié |
+| **BB · Branche B** (B-standard) | détection de stack ; `BuilderOnramp` ; **profil `node-ts`** (1ᵉʳ profil non-FastAPI, avec UI → exerce les deux gates) ; dégradation déclarée ; HITL-0 forcé ; hôte GitHub d'abord | Hisser `node-ts` au standard de la cible avec dégradation déclarée |
 
 Chaque epic = branche → PR → double gate → revue (HITL). On peut s'arrêter à n'importe quelle branche
 avec de la valeur livrée.
@@ -160,10 +171,15 @@ avec de la valeur livrée.
 - **Hôtes non-GitHub** (GitLab/Bitbucket/Azure DevOps) — déclarés indisponibles tant qu'un adaptateur
   d'hôte n'existe pas.
 
-## 9. Questions ouvertes
+## 9. Décisions (post-revue)
 
-- **Moteur d'analyse de l'ingestion** : sous-agents Claude Code dédiés vs heuristiques statiques vs
-  hybride ? (impacte le coût et la fiabilité de la carte d'archi ; à trancher en B0/BA).
-- **Première stack cible de BB** : `node-ts` proposé — à confirmer selon la demande réelle.
-- **Granularité du `RemediationPlanner`** : périmètre du « contrat » audité par défaut (tests/CI/sécu/
-  design/dette) — quel sous-ensemble en v1 ?
+- **Moteur d'analyse de l'ingestion = hybride** : heuristiques déterministes pour les faits durs
+  (stack, tests/CI, hôte, UI → pilotent `enforceable`), sous-agent pour l'interprétation (carte,
+  dette), validé à HITL-0. 100 % heuristique en BA, sous-agent branché en BC/BB (§4.3).
+- **Première stack de BB = `node-ts`** : stack réellement différente *et* dotée d'une UI → exerce les
+  deux gates (code + design). Stacks suivantes = profils ultérieurs.
+- **`RemediationPlanner` v1 = tests/CI + conformité design** : les deux dimensions déjà mesurables
+  sans outillage neuf (baseline + gate design existant). Sécurité, dette, montée de version =
+  incréments ultérieurs (§4.5).
+
+> Décisions intégrées le 2026-06-17 ; aucune question ouverte bloquante restante pour le plan.
