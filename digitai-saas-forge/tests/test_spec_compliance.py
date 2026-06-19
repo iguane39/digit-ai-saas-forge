@@ -39,6 +39,22 @@ class _FailingSpecReviewer:
         )
 
 
+class _HealingSpecReviewer:
+    """Under-build aux `fail_calls` premières revues, puis conforme → résolu via remédiation."""
+
+    def __init__(self, fail_calls: int = 2) -> None:
+        self._fail_calls = fail_calls
+        self._calls = 0
+
+    def review(self, story: Story, outcome: StoryOutcome, cwd: Path) -> SpecVerdict:
+        self._calls += 1
+        if self._calls <= self._fail_calls:
+            return SpecVerdict.from_findings(
+                [{"kind": "under-build", "criterion": "c", "detail": "d", "severity": "moyenne"}]
+            )
+        return SpecVerdict(passed=True)
+
+
 class _AlwaysApprove:
     def approve(self, summary: str, results: object) -> bool:
         return True
@@ -184,4 +200,20 @@ def test_supervisor_writes_findings_file_with_status(tmp_path: Path) -> None:
     )
     findings_md = (tmp_path / "SPEC_FINDINGS.md").read_text(encoding="utf-8")
     assert "under-build" in findings_md
-    assert "non-traité" in findings_md  # story blocked → finding non-traité
+    assert "| non-traité |" in findings_md  # story blocked → cellule statut non-traité
+
+
+def test_supervisor_marks_resolved_under_build_traite(tmp_path: Path) -> None:
+    outcome = StoryOutcome(story_id="1", code_ok=True, pr_url="http://pr/1")
+    report = superviser(
+        _layout(tmp_path),
+        bad=_StubBad(outcome),
+        design_check=_design_pass,
+        hitl=_AlwaysApprove(),
+        spec_reviewer=_HealingSpecReviewer(fail_calls=2),  # échoue puis OK au retry
+        stories=[Story(id="1", epic="e", title="t", acceptance=["c"])],
+    )
+    assert report.results[0].status == "ready-for-review"
+    assert report.results[0].attempts == 2  # résolu après une remédiation
+    findings_md = (tmp_path / "SPEC_FINDINGS.md").read_text(encoding="utf-8")
+    assert "| traité |" in findings_md and "| non-traité |" not in findings_md
