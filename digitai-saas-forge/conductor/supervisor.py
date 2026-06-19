@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from conductor.contracts import (
     BadSprintLayout,
@@ -24,6 +24,7 @@ from conductor.contracts import (
     StoryOutcome,
     StoryResult,
 )
+from conductor.findings import FindingRecord, write_findings
 from conductor.gates.design_gate import run_design_gate
 from conductor.gates.regression_gate import evaluate_regression
 from conductor.governance import HumanGate, ManualGate
@@ -115,8 +116,11 @@ def superviser(
 
     results: list[StoryResult] = []
     all_ready = True
+    records: list[FindingRecord] = []
+    next_id = 0
 
     for outcome in runner.run_sprint(layout):
+        first = reviewer.review(_story_for(outcome), outcome, layout.project_root)
         attempts = 1
         passed = _passes(outcome)
         while not passed and attempts <= max_retries:
@@ -124,25 +128,38 @@ def superviser(
             attempts += 1
             passed = _passes(outcome)
 
-        if passed:
-            results.append(
-                StoryResult(
-                    story_id=outcome.story_id,
-                    status="ready-for-review",
-                    attempts=attempts,
-                    pr_url=outcome.pr_url,
-                )
-            )
-        else:
+        status: Literal["ready-for-review", "blocked"] = (
+            "ready-for-review" if passed else "blocked"
+        )
+        if not passed:
             all_ready = False  # escalade HITL : la story reste bloquée
-            results.append(
-                StoryResult(
-                    story_id=outcome.story_id,
-                    status="blocked",
-                    attempts=attempts,
-                    pr_url=outcome.pr_url,
+        results.append(
+            StoryResult(
+                story_id=outcome.story_id,
+                status=status,
+                attempts=attempts,
+                pr_url=outcome.pr_url,
+            )
+        )
+        for finding in first.findings:
+            next_id += 1
+            kind = finding.get("kind", "")
+            resolved = kind == "under-build" and status == "ready-for-review"
+            records.append(
+                FindingRecord(
+                    id=f"SF-{next_id}",
+                    story=outcome.story_id,
+                    kind=kind,
+                    criterion=finding.get("criterion", ""),
+                    detail=finding.get("detail", ""),
+                    severity=finding.get("severity", ""),
+                    status="traité" if resolved else "non-traité",
+                    note="corrigé en remédiation" if resolved else "à reprendre manuellement",
                 )
             )
+
+    if records:
+        write_findings(layout.project_root / "SPEC_FINDINGS.md", records)
 
     hitl2 = gate.approve("merge final (HITL 2)", results) if (all_ready and results) else False
     return SprintReport(results=results, hitl2_approved=hitl2)

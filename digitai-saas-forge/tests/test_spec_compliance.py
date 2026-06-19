@@ -150,3 +150,38 @@ def test_claude_spec_reviewer_invalid_json_falls_back_to_pass(tmp_path: Path) ->
         tmp_path,
     )
     assert v.passed is True  # do-no-harm : interprétation indisponible → ne bloque pas
+
+
+def test_render_findings_md_has_status_column() -> None:
+    from conductor.findings import FindingRecord, render_findings_md
+
+    md = render_findings_md(
+        [
+            FindingRecord(
+                id="SF-1", story="1", kind="under-build", criterion="c", detail="d",
+                severity="moyenne", status="traité", note="corrigé",
+            ),
+            FindingRecord(
+                id="SF-2", story="1", kind="over-build", criterion="x", detail="y",
+                severity="faible", status="non-traité", note="",
+            ),
+        ]
+    )
+    assert "| statut |" in md
+    assert "traité" in md and "non-traité" in md
+    assert "SF-1" in md and "SF-2" in md
+
+
+def test_supervisor_writes_findings_file_with_status(tmp_path: Path) -> None:
+    outcome = StoryOutcome(story_id="1", code_ok=True, pr_url="http://pr/1")
+    superviser(
+        _layout(tmp_path),
+        bad=_StubBad(outcome),
+        design_check=_design_pass,
+        hitl=_AlwaysApprove(),
+        spec_reviewer=_FailingSpecReviewer(),  # under-build non résolu → blocked → non-traité
+        stories=[Story(id="1", epic="e", title="t", acceptance=["c"])],
+    )
+    findings_md = (tmp_path / "SPEC_FINDINGS.md").read_text(encoding="utf-8")
+    assert "under-build" in findings_md
+    assert "non-traité" in findings_md  # story blocked → finding non-traité
