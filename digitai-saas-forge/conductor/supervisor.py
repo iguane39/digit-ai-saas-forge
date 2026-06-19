@@ -12,12 +12,15 @@ Le contexte design est injecté par **copie locale** des styles (DE-2), pas via 
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 from conductor.contracts import (
     BadSprintLayout,
     GateVerdict,
+    SpecVerdict,
     SprintReport,
+    Story,
     StoryOutcome,
     StoryResult,
 )
@@ -28,6 +31,19 @@ from conductor.governance import HumanGate, ManualGate
 GATE_MAX_RETRIES = 3  # DE-3 : 3 retries d'agent avant escalade HITL
 
 DesignCheck = Callable[[StoryOutcome], GateVerdict]
+
+
+class SpecComplianceReviewer(Protocol):
+    """Juge la conformité d'une PR de story à ses critères d'acceptation."""
+
+    def review(self, story: Story, outcome: StoryOutcome, cwd: Path) -> SpecVerdict: ...
+
+
+class DefaultSpecReviewer:
+    """Pass-through déterministe : aucune revue, aucun finding (comportement par défaut)."""
+
+    def review(self, story: Story, outcome: StoryOutcome, cwd: Path) -> SpecVerdict:
+        return SpecVerdict(passed=True)
 
 
 class BadRunner(Protocol):
@@ -62,6 +78,8 @@ def superviser(
     bad: BadRunner | None = None,
     design_check: DesignCheck | None = None,
     hitl: HumanGate | None = None,
+    spec_reviewer: SpecComplianceReviewer | None = None,
+    stories: list[Story] | None = None,
     max_retries: int = GATE_MAX_RETRIES,
 ) -> SprintReport:
     """E · lance le sprint, applique le double gate + remédiation, pose HITL 2.
@@ -77,12 +95,23 @@ def superviser(
     gate = hitl if hitl is not None else ManualGate()
     design_md = layout.project_root / "design" / "DESIGN.md"
     check: DesignCheck = design_check or (lambda _outcome: run_design_gate(design_md))
+    if spec_reviewer is not None:
+        reviewer: SpecComplianceReviewer = spec_reviewer
+    else:
+        from conductor.harness.resolve import resolve_spec_reviewer
+
+        reviewer = resolve_spec_reviewer()
+    story_by_id = {s.id: s for s in (stories or [])}
+
+    def _story_for(o: StoryOutcome) -> Story:
+        return story_by_id.get(o.story_id) or Story(id=o.story_id, epic="", title="")
 
     def _passes(o: StoryOutcome) -> bool:
         design_ok = check(o).passed
         current = {"code": o.code_ok, "design": design_ok}
         no_regression = evaluate_regression(layout.baseline or {}, current).passed
-        return o.code_ok and design_ok and no_regression
+        spec_ok = reviewer.review(_story_for(o), o, layout.project_root).passed
+        return o.code_ok and design_ok and no_regression and spec_ok
 
     results: list[StoryResult] = []
     all_ready = True
