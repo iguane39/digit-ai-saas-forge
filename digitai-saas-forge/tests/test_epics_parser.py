@@ -48,3 +48,38 @@ def test_empty_or_prose_yields_empty() -> None:
 def test_epic_label_attached_to_story() -> None:
     stories = parse_epics(_SAMPLE)
     assert "Authentification" in stories[0].epic
+
+
+from pathlib import Path  # noqa: E402
+
+from conductor.harness.bmad_planner import ClaudeCliBmadPlanner  # noqa: E402
+from conductor.onramp.base import Substrate  # noqa: E402
+from conductor.profiles import FASTAPI_SAAS  # noqa: E402
+
+
+class _WritingCli:
+    """Fake CliRunner : écrit un epics.md échantillon dans planning-artifacts au déclenchement."""
+
+    def __init__(self, body: str) -> None:
+        self._body = body
+
+    def run(self, prompt: str, cwd: Path) -> str:
+        planning = cwd / "_bmad-output" / "planning-artifacts"
+        planning.mkdir(parents=True, exist_ok=True)
+        (planning / "epics.md").write_text(self._body, encoding="utf-8")
+        return "ok"
+
+
+def _substrate(tmp: Path) -> Substrate:
+    return Substrate(repo_path=tmp, profile=FASTAPI_SAAS, design_md_path=tmp / "DESIGN.md")
+
+
+def test_planner_populates_stories(tmp_path: Path) -> None:
+    plan = ClaudeCliBmadPlanner(cli=_WritingCli(_SAMPLE)).plan(_substrate(tmp_path))
+    assert [s.id for s in plan.stories] == ["6.1", "6.2"]
+    assert plan.hitl1_approved is False
+
+
+def test_planner_unparseable_epics_yields_empty_stories(tmp_path: Path) -> None:
+    plan = ClaudeCliBmadPlanner(cli=_WritingCli("prose sans story")).plan(_substrate(tmp_path))
+    assert plan.stories == []  # fallback : juge pass-through, pas de régression
