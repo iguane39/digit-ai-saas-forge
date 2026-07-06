@@ -12,6 +12,7 @@ from conductor.harness.git_provider import (
     GitHubProvider,
     UnsupportedProvider,
     detect_provider,
+    parse_azdo_remote,
     resolve_git_provider,
 )
 from conductor.process import ProcessResult
@@ -72,13 +73,15 @@ class _FakeAz:
     def list_policies(self, cwd: Path, pr_id: int) -> list[dict]:
         return self._policies.get(pr_id, [])
 
+    def web_base(self, cwd: Path) -> str:
+        return "https://dev.azure.com/o/p/_git/r"
+
 
 def test_azure_provider_maps_to_common_contract(tmp_path: Path) -> None:
     prs = [
         {
             "pullRequestId": 42,
             "sourceRefName": "refs/heads/feature/tests-d08",
-            "repository": {"webUrl": "https://dev.azure.com/o/p/_git/r"},
         }
     ]
     policies = {
@@ -98,6 +101,30 @@ def test_azure_provider_maps_to_common_contract(tmp_path: Path) -> None:
             "statusCheckRollup": [{"conclusion": "SUCCESS"}, {"conclusion": "PENDING"}],
         }
     ]
+
+
+def test_parse_azdo_remote_dev_azure() -> None:
+    org, project, repo = parse_azdo_remote("https://dev.azure.com/Nhood-DevOps/APP-IA/_git/repo")
+    assert (org, project, repo) == ("https://dev.azure.com/Nhood-DevOps", "APP-IA", "repo")
+
+
+def test_parse_azdo_remote_accented_repo_urlencoded() -> None:
+    # Cas réel : nom de repo accentué %-encodé — ce que `az --detect` ne sait pas gérer.
+    url = "https://dev.azure.com/Nhood-DevOps/APP-IA/_git/IAC_Plateforme_Vid%C3%A9o_IA_Ceetrus"
+    assert parse_azdo_remote(url) == (
+        "https://dev.azure.com/Nhood-DevOps",
+        "APP-IA",
+        "IAC_Plateforme_Vidéo_IA_Ceetrus",
+    )
+
+
+def test_parse_azdo_remote_visualstudio_and_gitsuffix() -> None:
+    org, project, repo = parse_azdo_remote("https://myorg.visualstudio.com/Proj/_git/my-repo.git")
+    assert (org, project, repo) == ("https://myorg.visualstudio.com", "Proj", "my-repo")
+
+
+def test_parse_azdo_remote_non_azdo_returns_none() -> None:
+    assert parse_azdo_remote("https://github.com/x/y.git") is None
 
 
 def test_azure_provider_empty_rollup_when_no_blocking_policy(tmp_path: Path) -> None:
