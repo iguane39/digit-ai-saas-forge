@@ -6,11 +6,23 @@ Adapter réutilisable (ingestion maintenant ; /bad, BMAD plus tard). Injectable 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Protocol
 
 from conductor.harness._text import clip
 from conductor.process import ProcessRunner, SubprocessProcessRunner, ToolNotFound
+
+_DEFAULT_TIMEOUT_S = 300
+
+
+def _default_timeout_s() -> int:
+    """Timeout par défaut, surchargé par ``CONDUCTOR_CLAUDE_TIMEOUT_S`` (300s est trop court pour
+    la planification BMAD ou le développement autonome d'une story)."""
+    raw = os.environ.get("CONDUCTOR_CLAUDE_TIMEOUT_S", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return _DEFAULT_TIMEOUT_S
 
 
 class CliRunner(Protocol):
@@ -25,7 +37,8 @@ class SubprocessClaudeCli:
     nu (WinError 2) —, sortie décodée en UTF-8, timeout borné.
 
     Args:
-        timeout_s: Délai maximal d'attente du processus claude (secondes).
+        timeout_s: Délai maximal d'attente du processus claude (secondes). ``None`` → valeur par
+            défaut, surchargée par l'env ``CONDUCTOR_CLAUDE_TIMEOUT_S``.
         skip_permissions: Si ``True``, ajoute ``--dangerously-skip-permissions`` à la commande
             (nécessaire pour le mode autonome BAD).
         runner: ProcessRunner injectable (fake en test).
@@ -34,11 +47,11 @@ class SubprocessClaudeCli:
     def __init__(
         self,
         *,
-        timeout_s: int = 300,
+        timeout_s: int | None = None,
         skip_permissions: bool = False,
         runner: ProcessRunner | None = None,
     ) -> None:
-        self._timeout_s = timeout_s
+        self._timeout_s = timeout_s if timeout_s is not None else _default_timeout_s()
         self._skip_permissions = skip_permissions
         self._runner: ProcessRunner = runner or SubprocessProcessRunner()
 

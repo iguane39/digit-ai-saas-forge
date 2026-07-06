@@ -22,11 +22,13 @@ class _FakeRunner:
         self._returncode = returncode
         self._exc = exc
         self.cmd: list[str] = []
+        self.timeout_s: int | None = None
 
     def run(
         self, args: Sequence[str], *, cwd: Path | None = None, timeout_s: int = 300
     ) -> ProcessResult:
         self.cmd = list(args)
+        self.timeout_s = timeout_s
         if self._exc is not None:
             raise self._exc
         return ProcessResult(self._returncode, self._stdout, "")
@@ -76,3 +78,24 @@ def test_default_has_no_skip_flag(tmp_path: Path) -> None:
     runner = _FakeRunner(stdout=json.dumps({"result": "ok"}))
     SubprocessClaudeCli(runner=runner).run("p", tmp_path)
     assert "--dangerously-skip-permissions" not in runner.cmd
+
+
+def test_timeout_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONDUCTOR_CLAUDE_TIMEOUT_S", "1800")
+    runner = _FakeRunner(stdout=json.dumps({"result": "ok"}))
+    SubprocessClaudeCli(runner=runner).run("p", tmp_path)
+    assert runner.timeout_s == 1800
+
+
+def test_explicit_timeout_overrides_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONDUCTOR_CLAUDE_TIMEOUT_S", "1800")
+    runner = _FakeRunner(stdout=json.dumps({"result": "ok"}))
+    SubprocessClaudeCli(timeout_s=42, runner=runner).run("p", tmp_path)
+    assert runner.timeout_s == 42
+
+
+def test_default_timeout_when_env_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CONDUCTOR_CLAUDE_TIMEOUT_S", raising=False)
+    runner = _FakeRunner(stdout=json.dumps({"result": "ok"}))
+    SubprocessClaudeCli(runner=runner).run("p", tmp_path)
+    assert runner.timeout_s == 300
