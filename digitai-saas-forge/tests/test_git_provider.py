@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -63,14 +64,16 @@ def test_resolve_gitlab_stub_raises_on_use(tmp_path: Path) -> None:
 class _FakeAz:
     """AzRunner factice : PR actives + policies canned (schéma `az repos`)."""
 
-    def __init__(self, prs: list[dict], policies: dict[int, list[dict]]) -> None:
+    def __init__(
+        self, prs: list[dict[str, Any]], policies: dict[int, list[dict[str, Any]]]
+    ) -> None:
         self._prs = prs
         self._policies = policies
 
-    def list_prs(self, cwd: Path) -> list[dict]:
+    def list_prs(self, cwd: Path) -> list[dict[str, Any]]:
         return self._prs
 
-    def list_policies(self, cwd: Path, pr_id: int) -> list[dict]:
+    def list_policies(self, cwd: Path, pr_id: int) -> list[dict[str, Any]]:
         return self._policies.get(pr_id, [])
 
     def web_base(self, cwd: Path) -> str:
@@ -104,8 +107,11 @@ def test_azure_provider_maps_to_common_contract(tmp_path: Path) -> None:
 
 
 def test_parse_azdo_remote_dev_azure() -> None:
-    org, project, repo = parse_azdo_remote("https://dev.azure.com/Nhood-DevOps/APP-IA/_git/repo")
-    assert (org, project, repo) == ("https://dev.azure.com/Nhood-DevOps", "APP-IA", "repo")
+    assert parse_azdo_remote("https://dev.azure.com/Nhood-DevOps/APP-IA/_git/repo") == (
+        "https://dev.azure.com/Nhood-DevOps",
+        "APP-IA",
+        "repo",
+    )
 
 
 def test_parse_azdo_remote_accented_repo_urlencoded() -> None:
@@ -119,8 +125,11 @@ def test_parse_azdo_remote_accented_repo_urlencoded() -> None:
 
 
 def test_parse_azdo_remote_visualstudio_and_gitsuffix() -> None:
-    org, project, repo = parse_azdo_remote("https://myorg.visualstudio.com/Proj/_git/my-repo.git")
-    assert (org, project, repo) == ("https://myorg.visualstudio.com", "Proj", "my-repo")
+    assert parse_azdo_remote("https://myorg.visualstudio.com/Proj/_git/my-repo.git") == (
+        "https://myorg.visualstudio.com",
+        "Proj",
+        "my-repo",
+    )
 
 
 def test_parse_azdo_remote_non_azdo_returns_none() -> None:
