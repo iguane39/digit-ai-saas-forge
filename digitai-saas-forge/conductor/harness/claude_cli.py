@@ -6,11 +6,11 @@ Adapter réutilisable (ingestion maintenant ; /bad, BMAD plus tard). Injectable 
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Protocol
 
 from conductor.harness._text import clip
+from conductor.process import ProcessRunner, SubprocessProcessRunner, ToolNotFound
 
 
 class CliRunner(Protocol):
@@ -20,39 +20,44 @@ class CliRunner(Protocol):
 class SubprocessClaudeCli:
     """Lance `claude -p <prompt> --output-format json` et renvoie le texte final (`result`).
 
+    Passe par le ProcessRunner unifié (P-07) : binaire résolu par ``shutil.which`` — portable
+    Windows/Linux, où `claude` est un shim `.cmd`/`.ps1` que ``subprocess`` ne trouve pas par nom
+    nu (WinError 2) —, sortie décodée en UTF-8, timeout borné.
+
     Args:
         timeout_s: Délai maximal d'attente du processus claude (secondes).
         skip_permissions: Si ``True``, ajoute ``--dangerously-skip-permissions`` à la commande
             (nécessaire pour le mode autonome BAD).
+        runner: ProcessRunner injectable (fake en test).
     """
 
-    def __init__(self, *, timeout_s: int = 300, skip_permissions: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_s: int = 300,
+        skip_permissions: bool = False,
+        runner: ProcessRunner | None = None,
+    ) -> None:
         self._timeout_s = timeout_s
         self._skip_permissions = skip_permissions
+        self._runner: ProcessRunner = runner or SubprocessProcessRunner()
 
     def run(self, prompt: str, cwd: Path) -> str:
         cmd = ["claude", "-p", prompt, "--output-format", "json"]
         if self._skip_permissions:
             cmd.append("--dangerously-skip-permissions")
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=self._timeout_s,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"claude CLI : timeout après {self._timeout_s}s") from exc
-        if proc.returncode != 0:
-            msg = f"claude CLI a échoué (code {proc.returncode}) : {clip(proc.stderr, 500)}"
+            res = self._runner.run(cmd, cwd=cwd, timeout_s=self._timeout_s)
+        except ToolNotFound as exc:
+            raise RuntimeError(f"claude CLI introuvable dans le PATH : {exc}") from exc
+        if res.returncode != 0:
+            msg = f"claude CLI a échoué (code {res.returncode}) : {clip(res.stderr, 500)}"
             raise RuntimeError(msg)
         try:
-            envelope = json.loads(proc.stdout)
+            envelope = json.loads(res.stdout)
         except json.JSONDecodeError as exc:
             raise RuntimeError(
-                f"Sortie claude illisible (JSON invalide) : {proc.stdout[:200]}"
+                f"Sortie claude illisible (JSON invalide) : {res.stdout[:200]}"
             ) from exc
         result = envelope.get("result")
         if not isinstance(result, str):
